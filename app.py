@@ -46,8 +46,6 @@ scaler = bundle["scaler"]
 label_encoders = bundle["encoders"]
 top_features = bundle["top_features"]
 
-df = load_data()
-
 # ================================
 # FIXED COLUMN NAMES
 # ================================
@@ -55,6 +53,74 @@ team_col = "C_name"
 position_col = "PS"
 player_col = "P_name"
 
+df = load_data()
+
+# ================================
+# TEAM NAME NORMALIZATION
+#  Dataset এ যেকোন ভ্যারিয়েন্ট → ক্যানোনিকাল নাম (তোমার SS এর মতো)
+# ================================
+TEAM_NORMALIZE = {
+    # Exact canonical names (no change, শুধু completeness এর জন্য)
+    "Liverpool": "Liverpool",
+    "Arsenal": "Arsenal",
+    "Man City": "Man City",
+    "Chelsea": "Chelsea",
+    "Newcastle": "Newcastle",
+    "Aston Villa": "Aston Villa",
+    "Forest": "Forest",
+    "Brighton": "Brighton",
+    "Bournemouth": "Bournemouth",
+    "Brentford": "Brentford",
+    "Fulham": "Fulham",
+    "Crystal Palace": "Crystal Palace",
+    "Everton": "Everton",
+    "West Ham": "West Ham",
+    "Man Utd": "Man Utd",
+    "Wolves": "Wolves",
+    "Tottenham": "Tottenham",
+    "Leicester": "Leicester",
+    "Ipswich": "Ipswich",
+    "Southampton": "Southampton",
+
+    # Common variants → canonical
+    "Manchester City": "Man City",
+    "ManCity": "Man City",
+
+    "Newcastle United": "Newcastle",
+    "Newcastle Utd": "Newcastle",
+
+    "Nottingham Forest": "Forest",
+    "Nottm Forest": "Forest",
+
+    "Brighton & Hove Albion": "Brighton",
+    "Brighton and Hove Albion": "Brighton",
+
+    "AFC Bournemouth": "Bournemouth",
+
+    "West Ham United": "West Ham",
+    "West Ham Utd": "West Ham",
+
+    "Manchester United": "Man Utd",
+    "Man United": "Man Utd",
+
+    "Wolverhampton": "Wolves",
+    "Wolverhampton Wanderers": "Wolves",
+
+    "Tottenham Hotspur": "Tottenham",
+    "Spurs": "Tottenham",
+
+    "Leicester City": "Leicester",
+    "Leicester City FC": "Leicester",
+
+    "Ipswich Town": "Ipswich",
+
+    # কিছু extra safety mapping
+    "Southampton FC": "Southampton",
+}
+
+df[team_col] = df[team_col].replace(TEAM_NORMALIZE)
+
+# প্রয়োজনীয় কলাম আছে কি না
 required_cols = [team_col, position_col, player_col]
 missing_cols = [col for col in required_cols if col not in df.columns]
 
@@ -72,40 +138,38 @@ def get_player_category(ps):
     return pos_map.get(str(ps).strip().upper(), "OTHER")
 
 def get_unique_teams():
-    try:
-        teams = df[team_col].dropna().unique().tolist()
-        return sorted([str(t).strip() for t in teams if str(t).strip() != ""])
-    except Exception as e:
-        st.error(f"Error getting teams: {e}")
-        return []
+    teams = df[team_col].dropna().unique().tolist()
+    return sorted([str(t).strip() for t in teams if str(t).strip() != ""])
 
 # ================================
-# MANAGER MAP (Team -> Manager)
+# 20 CANONICAL TEAMS + 20 MANAGERS
+# (তোমার দেওয়া টিম লিস্ট অনুযায়ী)
 # ================================
 MANAGER_BY_TEAM = {
+    "Liverpool": "Arne Slot",
     "Arsenal": "Mikel Arteta",
+    "Man City": "Pep Guardiola",
+    "Chelsea": "Mauricio Pochettino",
+    "Newcastle": "Eddie Howe",
     "Aston Villa": "Unai Emery",
+    "Forest": "Nuno Espirito Santo",
+    "Brighton": "Roberto De Zerbi",
     "Bournemouth": "Andoni Iraola",
     "Brentford": "Thomas Frank",
-    "Brighton": "Fabian Hurzeler",
-    "Burnley": "Scott Parker",
-    "Chelsea": "Enzo Maresca",
-    "Crystal Palace": "Oliver Glasner",
-    "Everton": "David Moyes",
     "Fulham": "Marco Silva",
-    "Leeds": "Daniel Farke",
-    "Liverpool": "Arne Slot",
-    "Manchester City": "Pep Guardiola",
-    "Manchester United": "Ruben Amorim",
-    "Newcastle United": "Eddie Howe",
-    "Nottingham Forest": "Nuno Espirito Santo",
-    "Tottenham": "Thomas Frank",
-    "Tottenham Hotspur": "Thomas Frank",
-    "West Ham": "Graham Potter",
-    "West Ham United": "Graham Potter",
-    "Wolverhampton": "Vitor Pereira",
-    "Wolves": "Vitor Pereira",
+    "Crystal Palace": "Oliver Glasner",
+    "Everton": "Sean Dyche",
+    "West Ham": "David Moyes",
+    "Man Utd": "Erik ten Hag",
+    "Wolves": "Gary O'Neil",
+    "Tottenham": "Ange Postecoglou",
+    "Leicester": "Enzo Maresca",
+    "Ipswich": "Kieran McKenna",
+    "Southampton": "Russell Martin",
 }
+
+# শুধু এই ২০টা canonical টিমই আমাদের ফাইনাল লিস্ট
+CANONICAL_TEAMS = list(MANAGER_BY_TEAM.keys())
 
 # reverse map: Manager -> [Teams]
 MANAGER_TO_TEAMS = {}
@@ -123,20 +187,12 @@ st.sidebar.success(f"✅ Position Column: **{position_col}**")
 
 st.sidebar.markdown("---")
 
-teams = get_unique_teams()
+# Team dropdown: শুধু canonical 20 team
+teams = sorted(CANONICAL_TEAMS)
 
-if not teams:
-    st.error("❌ No teams found in dataset!")
-    st.write("First 5 rows of data:")
-    st.dataframe(df.head())
-    st.stop()
-
-# Team select
 selected_team = st.sidebar.selectbox("🏟️ Select Team", teams)
 
-# ================================
 # MANAGER SELECT (label = Manager (Team))
-# ================================
 st.sidebar.markdown("### 👔 Manager")
 
 all_managers = sorted(MANAGER_TO_TEAMS.keys())
@@ -146,10 +202,7 @@ label_to_manager = {}
 
 for manager in all_managers:
     teams_for_manager = ", ".join(MANAGER_TO_TEAMS.get(manager, []))
-    if teams_for_manager:
-        label = f"{manager} ({teams_for_manager})"
-    else:
-        label = manager
+    label = f"{manager} ({teams_for_manager})"
     manager_display_options.append(label)
     label_to_manager[label] = manager
 
@@ -160,7 +213,6 @@ selected_manager_label = st.sidebar.selectbox(
     help="Start typing to search manager name",
 )
 
-# মডেলের জন্য শুধু ম্যানেজারের নাম
 manager_name = label_to_manager[selected_manager_label]
 
 # ================================
@@ -217,13 +269,16 @@ if predict_btn:
     with st.spinner("🔍 Analyzing players and generating predictions..."):
 
         try:
-            # Filter team players
+            # Filter team players (already normalized)
             team_players = df[df[team_col].str.strip() == selected_team.strip()].copy()
             team_players = team_players.drop_duplicates(subset=[player_col])
 
             if team_players.empty:
                 st.error(f"❌ No players found for **{selected_team}** in the dataset!")
-                st.info(f"Available teams: {', '.join(teams[:10])}")
+                st.info(
+                    "Current unique teams in data (after normalization): "
+                    + ", ".join(get_unique_teams())
+                )
                 st.stop()
 
             st.info(f"✅ Found **{len(team_players)}** players for {selected_team}")
@@ -308,12 +363,10 @@ if predict_btn:
 
             xi_df = start_xi[xi_display_cols].copy()
 
-            # Integer percentage (no decimals)
             xi_df["Confidence (%)"] = (
                 xi_df["Starter_Score"] * 100
             ).round(0).astype(int)
 
-            # Add serial number
             xi_df.insert(0, "No.", range(1, len(xi_df) + 1))
 
             rename_dict = {player_col: "Player", position_col: "Pos"}
@@ -327,7 +380,6 @@ if predict_btn:
                 final_cols.append("Avg Rating")
             final_cols.append("Confidence (%)")
 
-            # DARK THEME + CENTER ALIGNMENT (HTML table)
             html_table = """
             <style>
                 .dark-table {
@@ -492,7 +544,7 @@ if predict_btn:
                 st.code(traceback.format_exc())
 
 else:
-    st.info("👈 Select the team, formation and manager from the sidebar on the left and press the 'PREDICT SQUAD' button.")
+    st.info("👈 বামে সাইডবার থেকে টিম, ফরমেশন এবং ম্যানেজার সিলেক্ট করে **'PREDICT SQUAD'** বাটন চাপো।")
 
     st.markdown("### 📊 Sample Data Preview")
     st.dataframe(df.head(10), use_container_width=True)
