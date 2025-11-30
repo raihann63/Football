@@ -18,7 +18,7 @@ st.set_page_config(
 @st.cache_resource
 def load_bundle():
     try:
-        with open("model_bundle.pkl", "rb") as f:
+        with open("models/model_bundle.pkl", "rb") as f:
             bundle = pickle.load(f)
         return bundle
     except Exception as e:
@@ -31,7 +31,7 @@ def load_bundle():
 @st.cache_data
 def load_data():
     try:
-        df = pd.read_csv("player_data.csv")
+        df = pd.read_csv("data/player_data.csv")
         return df
     except Exception as e:
         st.error(f"❌ Error loading CSV file: {e}")
@@ -74,10 +74,43 @@ def get_player_category(ps):
 def get_unique_teams():
     try:
         teams = df[team_col].dropna().unique().tolist()
-        return sorted([str(t).strip() for t in teams if str(t).strip() != ''])
+        return sorted([str(t).strip() for t in teams if str(t).strip() != ""])
     except Exception as e:
         st.error(f"Error getting teams: {e}")
         return []
+
+# ================================
+# MANAGER MAP (Team -> Manager)
+# ================================
+MANAGER_BY_TEAM = {
+    "Arsenal": "Mikel Arteta",
+    "Aston Villa": "Unai Emery",
+    "Bournemouth": "Andoni Iraola",
+    "Brentford": "Thomas Frank",
+    "Brighton": "Fabian Hurzeler",
+    "Burnley": "Scott Parker",
+    "Chelsea": "Enzo Maresca",
+    "Crystal Palace": "Oliver Glasner",
+    "Everton": "David Moyes",
+    "Fulham": "Marco Silva",
+    "Leeds": "Daniel Farke",
+    "Liverpool": "Arne Slot",
+    "Manchester City": "Pep Guardiola",
+    "Manchester United": "Ruben Amorim",
+    "Newcastle United": "Eddie Howe",
+    "Nottingham Forest": "Nuno Espirito Santo",
+    "Tottenham": "Thomas Frank",
+    "Tottenham Hotspur": "Thomas Frank",
+    "West Ham": "Graham Potter",
+    "West Ham United": "Graham Potter",
+    "Wolverhampton": "Vitor Pereira",
+    "Wolves": "Vitor Pereira",
+}
+
+# reverse map: Manager -> [Teams]
+MANAGER_TO_TEAMS = {}
+for team_name, manager in MANAGER_BY_TEAM.items():
+    MANAGER_TO_TEAMS.setdefault(manager, []).append(team_name)
 
 # ================================
 # SIDEBAR: INPUTS
@@ -98,9 +131,41 @@ if not teams:
     st.dataframe(df.head())
     st.stop()
 
+# Team select
 selected_team = st.sidebar.selectbox("🏟️ Select Team", teams)
-manager_name = st.sidebar.text_input("👔 Manager Name", value="Mikel Arteta")
 
+# ================================
+# MANAGER SELECT (label = Manager (Team))
+# ================================
+st.sidebar.markdown("### 👔 Manager")
+
+all_managers = sorted(MANAGER_TO_TEAMS.keys())
+
+manager_display_options = []
+label_to_manager = {}
+
+for manager in all_managers:
+    teams_for_manager = ", ".join(MANAGER_TO_TEAMS.get(manager, []))
+    if teams_for_manager:
+        label = f"{manager} ({teams_for_manager})"
+    else:
+        label = manager
+    manager_display_options.append(label)
+    label_to_manager[label] = manager
+
+selected_manager_label = st.sidebar.selectbox(
+    "Select / type manager",
+    options=manager_display_options,
+    index=0,
+    help="Start typing to search manager name",
+)
+
+# মডেলের জন্য শুধু ম্যানেজারের নাম
+manager_name = label_to_manager[selected_manager_label]
+
+# ================================
+# FORMATION & SUBS
+# ================================
 st.sidebar.markdown("### 📊 Starting XI Formation")
 st.sidebar.caption("Total must be 11 players")
 
@@ -144,29 +209,29 @@ st.markdown("---")
 # PREDICTION LOGIC
 # ================================
 if predict_btn:
-    
+
     if total_xi != 11:
         st.error(f"⚠️ Starting XI must have exactly 11 players! (Current: {total_xi})")
         st.stop()
 
     with st.spinner("🔍 Analyzing players and generating predictions..."):
-        
+
         try:
             # Filter team players
             team_players = df[df[team_col].str.strip() == selected_team.strip()].copy()
             team_players = team_players.drop_duplicates(subset=[player_col])
-            
+
             if team_players.empty:
                 st.error(f"❌ No players found for **{selected_team}** in the dataset!")
                 st.info(f"Available teams: {', '.join(teams[:10])}")
                 st.stop()
-            
+
             st.info(f"✅ Found **{len(team_players)}** players for {selected_team}")
-            
+
             # Prepare input
             input_data = team_players.copy()
             input_data["Managers"] = manager_name
-            
+
             # Label encoding
             for col in label_encoders:
                 if col in input_data.columns:
@@ -177,41 +242,51 @@ if predict_btn:
                         .astype(str)
                         .apply(lambda x: le.transform([x])[0] if x in le.classes_ else -1)
                     )
-            
+
             # Add missing columns for scaler
             for col in scaler.feature_names_in_:
                 if col not in input_data.columns:
                     input_data[col] = 0
-            
+
             # Scaling
             input_for_scaler = input_data[scaler.feature_names_in_]
             input_scaled = input_data.copy()
             input_scaled[scaler.feature_names_in_] = scaler.transform(input_for_scaler)
-            
+
             # Feature selection
             final_input = input_scaled[top_features]
-            
+
             # Prediction
             team_players["Starter_Score"] = xgb_starter.predict_proba(final_input)[:, 1]
             team_players["Sub_Score"] = xgb_sub.predict_proba(final_input)[:, 1]
             team_players["Category"] = team_players[position_col].apply(get_player_category)
-            
+
             # Select Starting XI by position
-            gks = team_players[team_players["Category"] == "GK"].sort_values("Starter_Score", ascending=False)
-            defs = team_players[team_players["Category"] == "DEF"].sort_values("Starter_Score", ascending=False)
-            mids = team_players[team_players["Category"] == "MID"].sort_values("Starter_Score", ascending=False)
-            fwds = team_players[team_players["Category"] == "FWD"].sort_values("Starter_Score", ascending=False)
-            
-            start_xi = pd.concat([
-                gks.head(sx_gk),
-                defs.head(sx_def),
-                mids.head(sx_mid),
-                fwds.head(sx_fwd),
-            ])
-            
+            gks = team_players[team_players["Category"] == "GK"].sort_values(
+                "Starter_Score", ascending=False
+            )
+            defs = team_players[team_players["Category"] == "DEF"].sort_values(
+                "Starter_Score", ascending=False
+            )
+            mids = team_players[team_players["Category"] == "MID"].sort_values(
+                "Starter_Score", ascending=False
+            )
+            fwds = team_players[team_players["Category"] == "FWD"].sort_values(
+                "Starter_Score", ascending=False
+            )
+
+            start_xi = pd.concat(
+                [
+                    gks.head(sx_gk),
+                    defs.head(sx_def),
+                    mids.head(sx_mid),
+                    fwds.head(sx_fwd),
+                ]
+            )
+
             # Display Starting XI
             st.success(f"✅ **Prediction Complete for {selected_team}!**")
-            
+
             col_m1, col_m2, col_m3 = st.columns(3)
             with col_m1:
                 st.metric("🏆 Starting XI", len(start_xi), "players")
@@ -219,38 +294,40 @@ if predict_btn:
                 avg_conf = (start_xi["Starter_Score"].mean() * 100)
                 st.metric("📊 Avg Confidence", f"{avg_conf:.1f}%")
             with col_m3:
-                if 'Rating' in start_xi.columns:
+                if "Rating" in start_xi.columns:
                     avg_rating = start_xi["Rating"].mean()
                     st.metric("⭐ Avg Rating", f"{avg_rating:.1f}")
-            
+
             st.markdown("---")
             st.subheader(f"🏆 Starting XI ({sx_gk}-{sx_def}-{sx_mid}-{sx_fwd})")
-            
+
             # Prepare display data
             xi_display_cols = [player_col, position_col, "Starter_Score"]
             if "Rating" in start_xi.columns:
                 xi_display_cols.insert(2, "Rating")
-            
+
             xi_df = start_xi[xi_display_cols].copy()
-            
-            # ✅✅✅ INTEGER PERCENTAGE ONLY (NO DECIMALS) ✅✅✅
-            xi_df["Confidence (%)"] = (xi_df["Starter_Score"] * 100).round(0).astype(int)
-            
+
+            # Integer percentage (no decimals)
+            xi_df["Confidence (%)"] = (
+                xi_df["Starter_Score"] * 100
+            ).round(0).astype(int)
+
             # Add serial number
             xi_df.insert(0, "No.", range(1, len(xi_df) + 1))
-            
+
             rename_dict = {player_col: "Player", position_col: "Pos"}
             if "Rating" in xi_df.columns:
                 rename_dict["Rating"] = "Avg Rating"
-            
+
             xi_df = xi_df.rename(columns=rename_dict)
-            
+
             final_cols = ["No.", "Pos", "Player"]
             if "Avg Rating" in xi_df.columns:
                 final_cols.append("Avg Rating")
             final_cols.append("Confidence (%)")
-            
-            # DARK THEME + PERFECT CENTER ALIGNMENT
+
+            # DARK THEME + CENTER ALIGNMENT (HTML table)
             html_table = """
             <style>
                 .dark-table {
@@ -292,59 +369,66 @@ if predict_btn:
                 <thead>
                     <tr>
             """
-            
-            # Add headers
+
             for col in final_cols:
                 html_table += f"<th>{col}</th>"
             html_table += "</tr></thead><tbody>"
-            
-            # Add rows
+
             for _, row in xi_df[final_cols].iterrows():
                 html_table += "<tr>"
                 for col in final_cols:
                     html_table += f"<td>{row[col]}</td>"
                 html_table += "</tr>"
-            
+
             html_table += "</tbody></table>"
-            
+
             st.markdown(html_table, unsafe_allow_html=True)
-            
+
             # Substitutes
             remaining = team_players.drop(start_xi.index)
-            
-            rem_gks = remaining[remaining["Category"] == "GK"].sort_values("Sub_Score", ascending=False)
-            rem_defs = remaining[remaining["Category"] == "DEF"].sort_values("Sub_Score", ascending=False)
-            rem_mids = remaining[remaining["Category"] == "MID"].sort_values("Sub_Score", ascending=False)
-            rem_fwds = remaining[remaining["Category"] == "FWD"].sort_values("Sub_Score", ascending=False)
-            
-            subs = pd.concat([
-                rem_gks.head(sub_gk),
-                rem_defs.head(sub_def),
-                rem_mids.head(sub_mid),
-                rem_fwds.head(sub_fwd),
-            ])
-            
+
+            rem_gks = remaining[remaining["Category"] == "GK"].sort_values(
+                "Sub_Score", ascending=False
+            )
+            rem_defs = remaining[remaining["Category"] == "DEF"].sort_values(
+                "Sub_Score", ascending=False
+            )
+            rem_mids = remaining[remaining["Category"] == "MID"].sort_values(
+                "Sub_Score", ascending=False
+            )
+            rem_fwds = remaining[remaining["Category"] == "FWD"].sort_values(
+                "Sub_Score", ascending=False
+            )
+
+            subs = pd.concat(
+                [
+                    rem_gks.head(sub_gk),
+                    rem_defs.head(sub_def),
+                    rem_mids.head(sub_mid),
+                    rem_fwds.head(sub_fwd),
+                ]
+            )
+
             st.markdown("---")
             st.subheader("⚡ Substitutes Bench")
-            
+
             if subs.empty:
                 st.info("No substitutes selected with current settings.")
             else:
                 sub_display_cols = [player_col, position_col, "Sub_Score"]
                 if "Rating" in subs.columns:
                     sub_display_cols.insert(2, "Rating")
-                
+
                 sub_df = subs[sub_display_cols].copy()
-                
-                # ✅✅✅ INTEGER PERCENTAGE ONLY (NO DECIMALS) ✅✅✅
-                sub_df["Confidence (%)"] = (sub_df["Sub_Score"] * 100).round(0).astype(int)
-                
-                # Add serial number
+
+                sub_df["Confidence (%)"] = (
+                    sub_df["Sub_Score"] * 100
+                ).round(0).astype(int)
+
                 sub_df.insert(0, "No.", range(1, len(sub_df) + 1))
-                
+
                 sub_df = sub_df.rename(columns=rename_dict)
-                
-                # DARK THEME + PERFECT CENTER ALIGNMENT
+
                 html_table_sub = """
                 <style>
                     .dark-table {
@@ -386,23 +470,21 @@ if predict_btn:
                     <thead>
                         <tr>
                 """
-                
-                # Add headers
+
                 for col in final_cols:
                     html_table_sub += f"<th>{col}</th>"
                 html_table_sub += "</tr></thead><tbody>"
-                
-                # Add rows
+
                 for _, row in sub_df[final_cols].iterrows():
                     html_table_sub += "<tr>"
                     for col in final_cols:
                         html_table_sub += f"<td>{row[col]}</td>"
                     html_table_sub += "</tr>"
-                
+
                 html_table_sub += "</tbody></table>"
-                
+
                 st.markdown(html_table_sub, unsafe_allow_html=True)
-        
+
         except Exception as e:
             st.error(f"❌ Prediction Error: {e}")
             import traceback
@@ -410,12 +492,10 @@ if predict_btn:
                 st.code(traceback.format_exc())
 
 else:
-    st.info("👈 বামে সাইডবার থেকে টিম, ফরমেশন এবং ম্যানেজার সিলেক্ট করে **'PREDICT SQUAD'** বাটন চাপো।")
-    
+    st.info("👈 Select the team, formation and manager from the sidebar on the left and press the 'PREDICT SQUAD' button.")
+
     st.markdown("### 📊 Sample Data Preview")
     st.dataframe(df.head(10), use_container_width=True)
 
 st.markdown("---")
 st.caption("🤖 Powered by XGBoost Machine Learning | Built with Streamlit")
-
-
