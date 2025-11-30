@@ -544,10 +544,11 @@ if predict_btn:
                 st.code(traceback.format_exc())
 
 else:
-    st.info("👈 বামে সাইডবার থেকে টিম, ফরমেশন এবং ম্যানেজার সিলেক্ট করে **'PREDICT SQUAD'** বাটন চাপো।")
+    st.info("👈Select the team, formation and manager from the sidebar on the left and press the 'PREDICT SQUAD' button.")
 
     st.markdown("### 📊 Sample Data Preview")
     st.dataframe(df.head(10), use_container_width=True)
 
 st.markdown("---")
 st.caption("🤖 Powered by XGBoost Machine Learning | Built with Streamlit")
+
